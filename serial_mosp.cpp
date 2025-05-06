@@ -4,6 +4,7 @@
 #include <unordered_set>
 #include <queue>
 #include <cfloat>
+#include <omp.h>
 #include <fstream>
 #include <sstream>
 #include <string>
@@ -12,94 +13,104 @@
 #include <functional>
 
 using namespace std::chrono;
+using namespace std;
 
 struct Edge {
     long long from, to;
-    double length, travel_time, cost;
+    double obj1, obj2, obj3, obj4, obj5;
 };
 
-using Graph = std::unordered_map<long long, std::vector<Edge>>;
+using Graph = unordered_map<long long, vector<Edge>>;
 
 struct Vertex {
-    double length_dist = DBL_MAX;
-    double time_dist = DBL_MAX;
-    double cost_dist = DBL_MAX;
+    double obj1_dist = DBL_MAX;
+    double obj2_dist = DBL_MAX;
+    double obj3_dist = DBL_MAX;
+    double obj4_dist = DBL_MAX;
+    double obj5_dist = DBL_MAX;
     long long parent = -1;
     bool affected = false;
 };
 
-void loadGraphFromCSV(const std::string& filename, Graph& graph, std::unordered_map<long long, Vertex>& vertices) {
-    std::ifstream file(filename);
+void loadGraphFromCSV(const string& filename, Graph& graph, unordered_map<long long, Vertex>& vertices) {
+    ifstream file(filename);
     if (!file.is_open()) {
-        std::cerr << "Error: Failed to open file: " << filename << "\n";
+        cerr << "Error: Failed to open file: " << filename << "\n";
         exit(1);
     }
 
-    std::string line;
+    string line;
     int line_num = 0;
     int edges_loaded = 0;
 
-    // Skip header
-    if (!std::getline(file, line)) {
-        std::cerr << "Error: Empty file or header missing\n";
+    if (!getline(file, line)) {
+        cerr << "Error: Empty file or header missing\n";
         return;
     }
     line_num++;
 
-    while (std::getline(file, line)) {
+    while (getline(file, line)) {
         line_num++;
         if (line.empty()) continue;
 
-        std::stringstream ss(line);
-        std::vector<std::string> tokens;
-        std::string token;
+        stringstream ss(line);
+        vector<string> tokens;
+        string token;
 
-        while (std::getline(ss, token, ',')) {
+        while (getline(ss, token, ',')) {
             tokens.push_back(token);
         }
 
-        if (tokens.size() != 5) {
-            std::cerr << "Warning: Skipping malformed line " << line_num << ": " << line << "\n";
+        if (tokens.size() != 7) {
+            cerr << "Warning: Skipping malformed line " << line_num << ": " << line << "\n";
             continue;
         }
 
         try {
-            long long from = std::stoll(tokens[0]);
-            long long to = std::stoll(tokens[1]);
-            double length = std::stod(tokens[2]);
-            double time = std::stod(tokens[3]);
-            double cost = std::stod(tokens[4]);
+            //parsing edge data
+            long long from = stoll(tokens[0]);
+            long long to = stoll(tokens[1]);
+            double obj1 = stod(tokens[2]);
+            double obj2 = stod(tokens[3]);
+            double obj3 = stod(tokens[4]);
+            double obj4 = stod(tokens[5]);
+            double obj5 = stod(tokens[6]);
 
-            if (vertices.find(from) == vertices.end()) {
+	    //adding vertices if they dont exist 
+            if (vertices.find(from) == vertices.end()) {  
                 vertices[from] = Vertex();
             }
             if (vertices.find(to) == vertices.end()) {
                 vertices[to] = Vertex();
             }
 
-            graph[from].push_back({ from, to, length, time, cost });
+            graph[from].push_back({ from, to, obj1, obj2, obj3, obj4, obj5 });
             edges_loaded++;
         }
-        catch (const std::exception& e) {
-            std::cerr << "Error: Skipping invalid line " << line_num << ": " << line
+        catch (const exception& e) {
+            cerr << "Error: Skipping invalid line " << line_num << ": " << line
                 << " | Reason: " << e.what() << "\n";
             continue;
         }
     }
 
-    std::cout << "Successfully loaded " << edges_loaded << " edges and "
+    cout << "Successfully loaded " << edges_loaded << " edges and "
         << vertices.size() << " vertices from " << filename << "\n";
 }
 
-void parallelSOSP_Update(Graph& graph, std::unordered_map<long long, Vertex>& vertices, long long source) {
-    vertices[source].length_dist = 0;
-    vertices[source].time_dist = 0;
-    vertices[source].cost_dist = 0;
+void parallelSOSP_Update(Graph& graph, unordered_map<long long, Vertex>& vertices, long long source) {
+    vertices[source].obj1_dist = 0;
+    vertices[source].obj2_dist = 0;
+    vertices[source].obj3_dist = 0;
+    vertices[source].obj4_dist = 0;
+    vertices[source].obj5_dist = 0;
 
-    for (int objective = 0; objective < 3; ++objective) {
-        std::priority_queue<std::pair<double, long long>,
-            std::vector<std::pair<double, long long>>,
-            std::greater<>> pq;
+    for (int objective = 0; objective < 5; ++objective)  //processing objectives
+    {
+    	//using priority queue for Dijkstra's algorithm
+        priority_queue<pair<double, long long>,
+            vector<pair<double, long long>>,
+            greater<>> pq;
         pq.push({ 0.0, source });
 
         while (!pq.empty()) {
@@ -108,9 +119,11 @@ void parallelSOSP_Update(Graph& graph, std::unordered_map<long long, Vertex>& ve
 
             double current_dist;
             switch (objective) {
-            case 0: current_dist = vertices[u].length_dist; break;
-            case 1: current_dist = vertices[u].time_dist; break;
-            case 2: current_dist = vertices[u].cost_dist; break;
+            case 0: current_dist = vertices[u].obj1_dist; break;
+            case 1: current_dist = vertices[u].obj2_dist; break;
+            case 2: current_dist = vertices[u].obj3_dist; break;
+            case 3: current_dist = vertices[u].obj4_dist; break;
+            case 4: current_dist = vertices[u].obj5_dist; break;
             default: continue;
             }
 
@@ -123,18 +136,22 @@ void parallelSOSP_Update(Graph& graph, std::unordered_map<long long, Vertex>& ve
                 double edge_weight = 0;
 
                 switch (objective) {
-                case 0: edge_weight = e.length; break;
-                case 1: edge_weight = e.travel_time; break;
-                case 2: edge_weight = e.cost; break;
+                case 0: edge_weight = e.obj1; break;
+                case 1: edge_weight = e.obj2; break;
+                case 2: edge_weight = e.obj3; break;
+                case 3: edge_weight = e.obj4; break;
+                case 4: edge_weight = e.obj5; break;
                 }
                 alt += edge_weight;
 
                 double& target_dist = [&]() -> double& {
                     switch (objective) {
-                    case 0: return vertices[v].length_dist;
-                    case 1: return vertices[v].time_dist;
-                    case 2: return vertices[v].cost_dist;
-                    default: return vertices[v].length_dist;
+                    case 0: return vertices[v].obj1_dist;
+                    case 1: return vertices[v].obj2_dist;
+                    case 2: return vertices[v].obj3_dist;
+                    case 3: return vertices[v].obj4_dist;
+                    case 4: return vertices[v].obj5_dist;
+                    default: return vertices[v].obj1_dist;
                     }
                     }();
 
@@ -148,44 +165,46 @@ void parallelSOSP_Update(Graph& graph, std::unordered_map<long long, Vertex>& ve
     }
 }
 
-void printTree(const std::unordered_map<long long, Vertex>& vertices, int objective, long long source) {
-    const char* objective_names[] = { "Length", "Time", "Cost" };
-    std::cout << "\nSOSP Tree for Objective: " << objective_names[objective] << "\n";
+void printTree(const unordered_map<long long, Vertex>& vertices, int objective, long long source) {
+    const char* objective_names[] = { "Objective1", "Objective2", "Objective3", "Objective4", "Objective5" };
+    cout << "\nSOSP Tree for Objective: " << objective_names[objective] << "\n";
 
     for (const auto& [node, vtx] : vertices) {
         double dist;
         switch (objective) {
-        case 0: dist = vtx.length_dist; break;
-        case 1: dist = vtx.time_dist; break;
-        case 2: dist = vtx.cost_dist; break;
+        case 0: dist = vtx.obj1_dist; break;
+        case 1: dist = vtx.obj2_dist; break;
+        case 2: dist = vtx.obj3_dist; break;
+        case 3: dist = vtx.obj4_dist; break;
+        case 4: dist = vtx.obj5_dist; break;
         default: dist = DBL_MAX;
         }
 
         if (dist < DBL_MAX) {
-            std::cout << "Node " << node << ": Distance = " << dist;
+            cout << "Node " << node << ": Distance = " << dist;
             if (node != source) {
-                std::cout << ", Parent = " << vtx.parent;
+                cout << ", Parent = " << vtx.parent;
             }
-            std::cout << "\n";
+            cout << "\n";
         }
     }
 }
 
-std::unordered_map<long long, std::vector<Edge>> combineSOSPTrees(
+unordered_map<long long, vector<Edge>> combineSOSPTrees(
     const Graph& original_graph,
-    const std::unordered_map<long long, Vertex>& vertices,
-    const std::vector<double>& objective_weights = { 1.0, 1.0, 1.0 }) {
+    const unordered_map<long long, Vertex>& vertices,
+    const vector<double>& objective_weights = { 1.0, 1.0, 1.0, 1.0, 1.0 }) {
 
-    std::unordered_map<long long, std::vector<Edge>> combined_graph;
-    const int k = 3;
+    unordered_map<long long, vector<Edge>> combined_graph;
+    const int k = 5; 
 
-    // First collect all keys to iterate over
-    std::vector<long long> keys;
+    //collecting all keys to iterate over
+    vector<long long> keys;
     for (const auto& pair : original_graph) {
         keys.push_back(pair.first);
     }
 
-        std::unordered_map<long long, std::vector<Edge>> local_combined;
+        unordered_map<long long, vector<Edge>> local_combined;
 
         for (size_t i = 0; i < keys.size(); ++i) {
             long long u = keys[i];
@@ -204,59 +223,64 @@ std::unordered_map<long long, std::vector<Edge>> combineSOSPTrees(
                 const Vertex& to_vtx = to_it->second;
 
                 double combined_weight = 0;
+                
                 if (to_vtx.parent == u) {
-                    if (std::abs(to_vtx.length_dist - (from_vtx.length_dist + e.length)) < 1e-6)
+                //for each objective, check if this edge is on the shortest path
+                    if (abs(to_vtx.obj1_dist - (from_vtx.obj1_dist + e.obj1)) < 1e-6)
                         combined_weight += objective_weights[0];
-                    if (std::abs(to_vtx.time_dist - (from_vtx.time_dist + e.travel_time)) < 1e-6)
+                    if (abs(to_vtx.obj2_dist - (from_vtx.obj2_dist + e.obj2)) < 1e-6)
                         combined_weight += objective_weights[1];
-                    if (std::abs(to_vtx.cost_dist - (from_vtx.cost_dist + e.cost)) < 1e-6)
+                    if (abs(to_vtx.obj3_dist - (from_vtx.obj3_dist + e.obj3)) < 1e-6)
                         combined_weight += objective_weights[2];
+                    if (abs(to_vtx.obj4_dist - (from_vtx.obj4_dist + e.obj4)) < 1e-6)
+                        combined_weight += objective_weights[3];
+                    if (abs(to_vtx.obj5_dist - (from_vtx.obj5_dist + e.obj5)) < 1e-6)
+                        combined_weight += objective_weights[4];
 
-                    // Invert so higher priority objectives have lower weights
+                    //Inverting so higher priority objectives have lower weights
                     combined_weight = (k + 1) - combined_weight;
                 }
                 else {
-                    combined_weight = k + 1; // Max weight for non-SOSP edges
+                    combined_weight = k + 1; //max weight for non-SOSP edges
                 }
 
-                local_combined[u].push_back({ e.from, e.to, combined_weight, combined_weight, combined_weight });
+                local_combined[u].push_back({ e.from, e.to, combined_weight, combined_weight,
+                                            combined_weight, combined_weight, combined_weight });
             }
-        
+        }
 
             for (auto& pair : local_combined) {
                 combined_graph[pair.first].insert(combined_graph[pair.first].end(),
                     pair.second.begin(), pair.second.end());
             }
-    }
-
+       
     return combined_graph;
 }
 
 void computeFinalMOSP(const Graph& combined_graph,
-    const std::unordered_map<long long, Vertex>& vertices,
+    const unordered_map<long long, Vertex>& vertices,
     long long source) {
-    std::unordered_map<long long, Vertex> mosp_vertices;
+    unordered_map<long long, Vertex> mosp_vertices;
 
-    // Initialize vertices
     for (const auto& [node, _] : combined_graph) {
         mosp_vertices[node] = Vertex();
     }
 
     if (mosp_vertices.find(source) == mosp_vertices.end()) {
-        std::cerr << "Error: Source node " << source << " not found in combined graph\n";
+        cerr << "Error: Source node " << source << " not found in combined graph\n";
         return;
     }
 
-    mosp_vertices[source].length_dist = 0;
+    mosp_vertices[source].obj1_dist = 0;
 
-    std::priority_queue<std::pair<double, long long>,
-        std::vector<std::pair<double, long long>>,
-        std::greater<>> pq;
+    priority_queue<pair<double, long long>,
+        vector<pair<double, long long>>,
+        greater<>> pq;
     pq.push({ 0.0, source });
 
     while (!pq.empty()) {
         auto [dist_u, u] = pq.top(); pq.pop();
-        if (dist_u > mosp_vertices[u].length_dist) continue;
+        if (dist_u > mosp_vertices[u].obj1_dist) continue;
 
         auto it = combined_graph.find(u);
         if (it == combined_graph.end()) continue;
@@ -264,40 +288,41 @@ void computeFinalMOSP(const Graph& combined_graph,
         for (size_t i = 0; i < it->second.size(); ++i) {
             const Edge& e = it->second[i];
             long long v = e.to;
-            double alt = mosp_vertices[u].length_dist + e.length;
+            double alt = mosp_vertices[u].obj1_dist + e.obj1;
 
-                if (alt < mosp_vertices[v].length_dist) {
-                    mosp_vertices[v].length_dist = alt;
+                if (alt < mosp_vertices[v].obj1_dist) {
+                    mosp_vertices[v].obj1_dist = alt;
                     mosp_vertices[v].parent = u;
                     pq.push({ alt, v });
                 }
         }
     }
 
-    std::cout << "\nFinal MOSP Tree with All Objective Values:\n";
-    std::cout << "Node | Combined Weight | Parent | (Length, Time, Cost)\n";
+    cout << "\nFinal MOSP Tree with All Objective Values:\n";
+    cout << "Node | Combined Weight | Parent | (Obj1, Obj2, Obj3, Obj4, Obj5)\n";
     for (const auto& [node, vtx] : mosp_vertices) {
-        if (vtx.length_dist < DBL_MAX) {
-            std::cout << "Node " << node << ": " << vtx.length_dist;
+        if (vtx.obj1_dist < DBL_MAX) {
+            cout << "Node " << node << ": " << vtx.obj1_dist;
             if (node != source) {
-                std::cout << ", Parent = " << vtx.parent;
+                cout << ", Parent = " << vtx.parent;
             }
 
             auto orig_it = vertices.find(node);
             if (orig_it != vertices.end()) {
                 const Vertex& orig_vtx = orig_it->second;
-                std::cout << ", Objectives = (" << orig_vtx.length_dist << ", "
-                    << orig_vtx.time_dist << ", " << orig_vtx.cost_dist << ")";
+                cout << ", Objectives = (" << orig_vtx.obj1_dist << ", "
+                    << orig_vtx.obj2_dist << ", " << orig_vtx.obj3_dist << ", "
+                    << orig_vtx.obj4_dist << ", " << orig_vtx.obj5_dist << ")";
             }
-            std::cout << "\n";
+            cout << "\n";
         }
     }
 }
 
-void incrementalUpdate(Graph& graph, std::unordered_map<long long, Vertex>& vertices,
-    long long source, const std::vector<Edge>& inserted_edges) {
-    // Mark affected vertices
-    std::unordered_set<long long> affected_vertices;
+void incrementalUpdate(Graph& graph, unordered_map<long long, Vertex>& vertices,
+    long long source, const vector<Edge>& inserted_edges) {
+    //marking affected vertices
+    unordered_set<long long> affected_vertices;
     for (const auto& edge : inserted_edges) {
         affected_vertices.insert(edge.from);
         affected_vertices.insert(edge.to);
@@ -318,62 +343,74 @@ void incrementalUpdate(Graph& graph, std::unordered_map<long long, Vertex>& vert
 int main() {
     auto start_time = high_resolution_clock::now();
     Graph graph;
-    std::unordered_map<long long, Vertex> vertices;
+    unordered_map<long long, Vertex> vertices;
 
-    loadGraphFromCSV("multi_obj_graph.csv", graph, vertices);
-    //loadGraphFromCSV("small_graph.csv", graph, vertices);
+    loadGraphFromCSV("japan.csv", graph, vertices);
 
     if (vertices.empty()) {
-        std::cerr << "Error: No vertices loaded. Exiting.\n";
+        cerr << "Error: No vertices loaded. Exiting.\n";
         return 1;
     }
 
-    long long source = 61283293;
+    //long long source = 61283293;
     //long long source = 1;
+    long long source = 224811793;
     if (vertices.find(source) == vertices.end()) {
-        std::cerr << "Error: Source node " << source << " not found. Available nodes:\n";
+        cerr << "Error: Source node " << source << " not found. Available nodes:\n";
         for (const auto& [node, _] : vertices) {
-            std::cerr << node << "\n";
+            cerr << node << "\n";
         }
         return 1;
     }
 
-    // Initial SOSP computation
+    //initial SOSP computation
     parallelSOSP_Update(graph, vertices, source);
     printTree(vertices, 0, source);
     printTree(vertices, 1, source);
     printTree(vertices, 2, source);
+    printTree(vertices, 3, source);
+    printTree(vertices, 4, source);
 
-    // Edge insertions with incremental update
-    std::vector<Edge> inserted_edges = {
-        {61283293, 61283126, 50, 10, 0},
-        {61323022, 61283287, 30, 5, 0},
-        {61283322, 61283218, 80, 15, 0}
+    //edge insertions with incremental update
+    vector<Edge> inserted_edges = {
+        { 224811793, 12017420150, 200.00, 24.00, 0.0159, 38.00, 1 },
+        { 224811793, 438102571, 110.00, 13.20, 0.0088, 21.00, 1 },
+        { 224811818, 402756500, 142.00, 10.20, 0.0114, 27.00, 2 },
+        { 224811845, 412144985, 140.00, 10.10, 0.0113, 27.00, 2 },
+        { 224811905, 434344368, 170.00, 15.30, 0.0136, 32.50, 4 },
+        { 224811905, 3834323577, 230.00, 21.00, 0.0183, 43.80, 1 },
+        { 243776548, 3256136833, 410.00, 49.30, 0.0329, 78.80, 2 },
+        { 243776548, 1332356080, 130.00, 15.60, 0.0104, 25.00, 1 },
+        { 243776563, 1323463567, 52.00, 6.20, 0.0041, 10.00, 2 },
+        { 243776563, 1323463523, 40.00, 4.80, 0.0032, 7.80, 1 }
+
     };
     /*std::vector<Edge> inserted_edges = {
-        {1, 2, 7, 10, 15},
-        {1, 5, 4, 5, 7},
-        {3, 5, 1, 15, 3}
+        {1, 2, 7, 10, 15, 0, 0},
+        {1, 5, 4, 5, 7, 0, 0},
+        {3, 5, 1, 15, 3, 0, 0}
     };*/
 
     for (const auto& edge : inserted_edges) {
-        std::cout << "\nInserting Edge: " << edge.from << " -> " << edge.to << "\n";
+        cout << "\nInserting Edge: " << edge.from << " -> " << edge.to << "\n";
 
-        // Use incremental update instead of full recomputation
+        //using incremental update instead of full recomputation
         incrementalUpdate(graph, vertices, source, { edge });
 
         printTree(vertices, 0, source);
         printTree(vertices, 1, source);
         printTree(vertices, 2, source);
+        printTree(vertices, 3, source);
+        printTree(vertices, 4, source);
     }
 
-    // After all insertions: combine trees and compute final MOSP
+    //after all insertions, combining trees and computing final MOSP
     auto combined_graph = combineSOSPTrees(graph, vertices);
     computeFinalMOSP(combined_graph, vertices, source);
 
     auto end_time = high_resolution_clock::now();
     auto duration = duration_cast<milliseconds>(end_time - start_time);
-    std::cout << "\nTotal execution time: " << duration.count() << " ms\n";
+    cout << "\nTotal execution time: " << duration.count() << " ms\n";
 
     return 0;
 }
